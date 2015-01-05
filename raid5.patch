@@ -1,0 +1,104 @@
+--- /usr/src/redhat/BUILD/kernel-2.6.32-220.el6/linux-2.6.32-220.el6vsds.x86_64/drivers/md/raid5.c	2013-01-06 13:37:07.160631991 +0800
++++ raid5.c	2013-01-01 11:00:46.609306579 +0800
+@@ -1651,9 +1651,10 @@
+ {
+ 	struct stripe_head *sh = bi->bi_private;
+ 	raid5_conf_t *conf = sh->raid_conf;
++	mdk_rdev_t *rdev;
+ 	int disks = sh->disks, i;
+ 	int uptodate = test_bit(BIO_UPTODATE, &bi->bi_flags);
+-
++	
+ 	for (i=0 ; i<disks; i++)
+ 		if (bi == &sh->dev[i].req)
+ 			break;
+@@ -1668,6 +1669,20 @@
+ 
+ 	if (!uptodate)
+ 		md_error(conf->mddev, conf->disks[i].rdev);
++#ifdef __BW_RECOV__
++	else {
++		sector_t blocks = 0;
++		rdev = rcu_dereference(conf->disks[i].rdev);
++		if (rdev && !test_bit(In_sync, &rdev->flags)
++				 &&	!test_bit(Faulty, &rdev->flags)) {
++			/*bitmap_endwrite(conf->mddev->bitmap, sh->sector,
++					STRIPE_SECTORS, 1, 0);*/
++			bitmap_end_sync(conf->mddev->bitmap, sh->sector, &blocks, 0);
++			clear_bit(R5_ReadError, &sh->dev[i].flags);
++			clear_bit(R5_ReWrite, &sh->dev[i].flags);
++		}
++	}
++#endif
+ 
+ 	rdev_dec_pending(conf->disks[i].rdev, conf->mddev);
+ 	
+@@ -2330,6 +2345,11 @@
+ {
+ 	struct r5dev *dev = &sh->dev[disk_idx];
+ 	struct r5dev *failed_dev = &sh->dev[s->failed_num];
++#ifdef __BW_RECOV__
++	raid5_conf_t *conf = sh->raid_conf; 
++	mdk_rdev_t *rdev;
++	rdev = rcu_dereference(conf->disks[disk_idx].rdev);
++#endif
+ 
+ 	/* is the data in this block needed, and can we get it? */
+ 	if (!test_bit(R5_LOCKED, &dev->flags) &&
+@@ -2366,7 +2386,13 @@
+ 			s->locked++;
+ 			pr_debug("Reading block %d (sync=%d)\n", disk_idx,
+ 				s->syncing);
++		} 
++#ifdef __BW_RECOV__
++		else if (rdev && !test_bit(In_sync, &rdev->flags) && 
++				!test_bit(Faulty, &rdev->flags)) {
++			set_bit(R5_ReadError, &dev->flags);
+ 		}
++#endif
+ 	}
+ 
+ 	return 0;
+@@ -3087,11 +3113,20 @@
+ 			if (sh->sector + STRIPE_SECTORS <= rdev->recovery_offset)
+ 				set_bit(R5_Insync, &dev->flags);
+ 		}
++#ifdef __BW_RECOV__
++		if (!test_bit(R5_Insync, &dev->flags) 
++				&& (!rdev || test_bit(Faulty, &rdev->flags))) {
++			/* The ReadError flag will just be confusing now */
++			clear_bit(R5_ReadError, &dev->flags);
++			clear_bit(R5_ReWrite, &dev->flags);
++		}
++#else
+ 		if (!test_bit(R5_Insync, &dev->flags)) {
+ 			/* The ReadError flag will just be confusing now */
+ 			clear_bit(R5_ReadError, &dev->flags);
+ 			clear_bit(R5_ReWrite, &dev->flags);
+ 		}
++#endif
+ 		if (test_bit(R5_ReadError, &dev->flags))
+ 			clear_bit(R5_Insync, &dev->flags);
+ 		if (!test_bit(R5_Insync, &dev->flags)) {
+@@ -3217,9 +3252,21 @@
+ 		) {
+ 		dev = &sh->dev[s.failed_num];
+ 		if (!test_bit(R5_ReWrite, &dev->flags)) {
++			mdk_rdev_t *rdev = NULL;
+ 			set_bit(R5_Wantwrite, &dev->flags);
+ 			set_bit(R5_ReWrite, &dev->flags);
+ 			set_bit(R5_LOCKED, &dev->flags);
++#ifdef __BW_RECOV__
++			rcu_read_lock();
++			rdev = rcu_dereference(conf->disks[s.failed_num].rdev);
++			if (rdev && !test_bit(In_sync, &rdev->flags) && 
++				!test_bit(Faulty, &rdev->flags)) {
++				//bitmap_startwrite(conf->mddev->bitmap, sh->sector, STRIPE_SECTORS, 0);
++				sector_t blocks = 0;
++				bitmap_start_sync(conf->mddev->bitmap, sh->sector, &blocks, 0);
++			}
++			rcu_read_unlock();
++#endif
+ 			s.locked++;
+ 		} else {
+ 			/* let's read it back */

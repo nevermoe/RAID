@@ -1,0 +1,1 @@
+cmd_drivers/md/dm-delay.ko.unsigned := ld -r -m elf_x86_64 -T /usr/src/redhat/BUILD/kernel-2.6.32-220.el6/linux-2.6.32-220.el6vsds.x86_64/scripts/module-common.lds --build-id -o drivers/md/dm-delay.ko.unsigned drivers/md/dm-delay.o drivers/md/dm-delay.mod.o 

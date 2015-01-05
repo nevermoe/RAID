@@ -1,0 +1,8 @@
+#!/bin/sh
+i=0
+while [[ $i -le 16383 ]]
+do
+	let j=$i*2
+	dd if=/dev/md0 of=/dev/null bs=64K count=1 seek=$j iflag=direct
+	let i=i+1
+done
